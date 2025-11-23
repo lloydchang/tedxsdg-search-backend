@@ -19,6 +19,7 @@ from backend.fastapi.observability.honeycomb import (
     get_tracer,
     add_span_attribute,
 )
+from backend.fastapi.observability.middleware import ObservabilityMiddleware
 
 # Initialize Honeycomb observability
 configure_honeycomb(
@@ -34,6 +35,9 @@ app = FastAPI(
 
 # Instrument FastAPI with OpenTelemetry
 instrument_fastapi(app)
+
+# Add observability middleware
+app.add_middleware(ObservabilityMiddleware)
 
 # Get tracer for custom spans
 tracer = get_tracer(__name__)
@@ -66,6 +70,10 @@ vocabulary = load_vocabulary(cache_dir)
 def cached_semantic_search(query: str, top_n: int = 100) -> List[Dict[str, Any]]:
     """Cached semantic search."""
     print(f"DEBUG: Using LRU cache for query: '{query}'")
+    # We can't easily track cache hits directly inside the cached function without a wrapper,
+    # but we can infer it or just log it.
+    # For observability, we'll rely on the fact that 'semantic_search' (instrumented) 
+    # won't be called on a cache hit.
     return perform_semantic_search(query, top_n)
 
 def perform_semantic_search(query: str, top_n: int = 100) -> List[Dict[str, Any]]:
@@ -305,6 +313,22 @@ def search(request: Request, query: str = Query(..., min_length=1, max_length=10
 
             # Add final result count to span
             add_span_attribute("results.final_count", len(results))
+            
+            if results:
+                # Track result details
+                slugs = [r.get('document', {}).get('slug', 'unknown') for r in results]
+                scores = [r.get('score', 0.0) for r in results]
+                
+                # Add list of slugs (truncated if too long)
+                add_span_attribute("results.slugs", slugs[:10]) # Top 10 slugs
+                
+                # Add score statistics
+                if scores:
+                    add_span_attribute("results.score.max", max(scores))
+                    add_span_attribute("results.score.min", min(scores))
+                    add_span_attribute("results.score.avg", sum(scores) / len(scores))
+            else:
+                add_span_attribute("results.empty", True)
 
         except RuntimeError as e:
             print(f"{request_uuid} [Cache Error] {e}")

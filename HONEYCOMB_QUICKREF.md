@@ -154,13 +154,20 @@ WHERE: name = "search_request"
 - `search.sdg_tag` - SDG tag being searched
 
 ### Results
-- `sdg_results.count` - SDG filtered results
-- `semantic_results.count` - Semantic search results
-- `presenter_results.count` - Presenter filtered results
 - `results.final_count` - Final result count
+- `results.slugs` - List of returned slugs
+- `results.score.max` - Max relevance score
+- `results.score.avg` - Average relevance score
+- `results.empty` - True if no results
+
+### Semantic Search Internals
+- `calculation.duration_seconds` - Core calculation time
+- `tfidf.document_count` - Total documents scanned
+- `query.token_count` - Query complexity
 
 ### Performance
 - `search.duration_seconds` - Total search duration
+- `http.duration_seconds` - Global request duration
 
 ### Errors
 - `error` - Boolean, true if error occurred

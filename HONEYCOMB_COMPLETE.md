@@ -14,8 +14,12 @@ Honeycomb observability has been successfully integrated into the TEDxSDG Search
 2. **`backend/fastapi/observability/__init__.py`** (3 lines)
    - Package initialization
 
+3. **`backend/fastapi/observability/middleware.py`** (45 lines)
+   - Global observability middleware
+   - Tracks response size, duration, and endpoint for all requests
+
 ### Configuration
-3. **`.env.example`** (35 lines)
+4. **`.env.example`** (35 lines)
    - Environment variable template
    - Comprehensive documentation for all configuration options
 
@@ -84,30 +88,30 @@ Added Honeycomb to Technical Requirements section
 - ✅ Status codes
 - ✅ Routes and methods
 
+### Global Middleware
+- ✅ `api.endpoint`: API path
+- ✅ `http.response_size`: Response size in bytes
+- ✅ `http.duration_seconds`: Global request duration
+
 ### Custom Instrumentation (`/api/search`)
 
-#### Span Attributes (15+)
-- `query` - Original search query
-- `request_id` - Unique request identifier
-- `client_ip` - Client IP address
-- `query.normalized` - Normalized query string
-- `query.is_sdg` - Boolean, is SDG query
-- `query.sdg_number` - SDG number (if applicable)
-- `search.type` - Search type (sdg_tag/general)
-- `search.sdg_tag` - SDG tag being searched
-- `query.augmented` - Augmented query with keywords
-- `sdg_results.count` - SDG filtered results count
-- `semantic_results.count` - Semantic search results count
-- `presenter_results.count` - Presenter filtered results count
-- `results.final_count` - Final result count
-- `search.duration_seconds` - Total search duration
-- `error`, `error.type`, `error.message` - Error tracking
+#### Span Attributes (20+)
+- **Request**: `query`, `request_id`, `client_ip`
+- **Query Analysis**: `query.normalized`, `query.is_sdg`, `query.sdg_number`, `search.type`, `query.augmented`
+- **Results**: `results.final_count`, `results.slugs` (list), `results.score.max/min/avg`, `results.empty`
+- **Performance**: `search.duration_seconds`
+- **Errors**: `error`, `error.type`, `error.message`
 
-#### Custom Spans (4)
+#### Semantic Search Internals
+- **Performance**: `calculation.duration_seconds`
+- **Data Stats**: `tfidf.matrix_shape`, `tfidf.document_count`, `query.token_count`
+
+#### Custom Spans (5)
 1. `search_request` - Main search operation
 2. `filter_by_sdg_tag` - SDG tag filtering
 3. `semantic_search` - Semantic search operation
 4. `parallel_search` - Parallel presenter and semantic search
+5. `semantic_search_core` - Core search logic (in service)
 
 ## 🚀 Quick Start
 

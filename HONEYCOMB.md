@@ -109,29 +109,63 @@ FastAPI is automatically instrumented, tracking:
 - Status codes
 - Routes
 
+### Global Middleware Attributes
+Added to every request:
+- `api.endpoint`: The API path (e.g., `/api/search`)
+- `http.response_size`: Size of the response in bytes
+- `http.duration_seconds`: Total request duration
+
 ### Custom Instrumentation
 
 The `/api/search` endpoint includes custom spans and attributes:
 
 #### Span Attributes
 
+**Request Context:**
 - `query`: The original search query
 - `request_id`: Unique request identifier
 - `client_ip`: Client IP address
+
+**Query Analysis:**
 - `query.normalized`: Normalized query string
 - `query.is_sdg`: Whether this is an SDG-specific query
 - `query.sdg_number`: SDG number (if applicable)
 - `search.type`: Type of search (`sdg_tag` or `general`)
 - `search.sdg_tag`: SDG tag being searched (if applicable)
 - `query.augmented`: Augmented query with SDG keywords
+
+**Result Statistics:**
+- `results.final_count`: Final number of results returned
+- `results.slugs`: List of top 10 document slugs returned
+- `results.score.max`: Maximum relevance score
+- `results.score.min`: Minimum relevance score
+- `results.score.avg`: Average relevance score
+- `results.empty`: Boolean, true if no results found
 - `sdg_results.count`: Number of SDG-filtered results
 - `semantic_results.count`: Number of semantic search results
 - `presenter_results.count`: Number of presenter-filtered results
-- `results.final_count`: Final number of results returned
+
+**Performance:**
 - `search.duration_seconds`: Total search duration
+
+**Error Tracking:**
 - `error`: Whether an error occurred
 - `error.type`: Type of error (`cache_error` or `search_error`)
 - `error.message`: Error message
+
+### Semantic Search Internals
+The core search logic (`semantic_search.py`) tracks:
+
+**Data Stats:**
+- `tfidf.matrix_shape`: Shape of the TF-IDF matrix
+- `tfidf.vocabulary_size`: Size of the vocabulary
+- `tfidf.document_count`: Number of documents
+- `query.token_count`: Number of tokens in query
+- `query.vector_size`: Number of non-zero terms in query vector
+
+**Performance:**
+- `calculation.duration_seconds`: Time taken for cosine similarity calculation
+- `calculation.documents_processed`: Number of documents compared
 
 #### Custom Spans
 
