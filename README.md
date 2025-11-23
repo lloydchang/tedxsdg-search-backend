@@ -75,6 +75,7 @@ TEDxSDG has the potential to create significant real-world impact by:
 
 - Next.js (JavaScript front-end framework)
 - FastAPI (Python back-end framework)
+- **Honeycomb Observability** (OpenTelemetry-based distributed tracing) - See [HONEYCOMB.md](HONEYCOMB.md) for setup instructions
 
 # TEDxSDG Search Backend
 

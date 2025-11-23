@@ -13,6 +13,17 @@ from functools import lru_cache
 from backend.fastapi.services.semantic_search import semantic_search
 from backend.fastapi.cache.cache_manager_read import load_cache
 from backend.fastapi.data.sdg_keywords import sdg_keywords  # Ensure this includes 'sdg1' to 'sdg17'
+from backend.fastapi.observability.honeycomb import (
+    configure_honeycomb,
+    instrument_fastapi,
+    get_tracer,
+    add_span_attribute,
+)
+
+# Initialize Honeycomb observability
+configure_honeycomb(
+    service_name=os.getenv("OTEL_SERVICE_NAME", "tedxsdg-search-backend"),
+)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -20,6 +31,12 @@ app = FastAPI(
     redoc_url="/api/search/redoc",
     openapi_url="/api/search/openapi.json"
 )
+
+# Instrument FastAPI with OpenTelemetry
+instrument_fastapi(app)
+
+# Get tracer for custom spans
+tracer = get_tracer(__name__)
 
 # Configure CORS
 app.add_middleware(
@@ -197,77 +214,115 @@ def search(request: Request, query: str = Query(..., min_length=1, max_length=10
     search_start_time = time.time()
     print(f"{request_uuid} [Search] Starting search for query: '{query}'...")
 
-    try:
-        # Normalize query
-        normalized_query = normalize_sdg_query(query)
-        sdg_number = extract_sdg_number(query)
-        is_sdg_query = normalized_query.lower().startswith("sdg")
+    # Create a custom span for the search operation
+    with tracer.start_as_current_span("search_request") as span:
+        # Add query attributes to the span
+        add_span_attribute("query", query)
+        add_span_attribute("request_id", str(request_uuid))
+        add_span_attribute("client_ip", request.client.host if request.client else "unknown")
 
-        if is_sdg_query and sdg_number:
-            # Handle SDG tag-based search
-            sdg_tag = f"sdg{sdg_number}"
-            print(f"DEBUG: SDG tag detected: '{sdg_tag}'")
+        try:
+            # Normalize query
+            normalized_query = normalize_sdg_query(query)
+            sdg_number = extract_sdg_number(query)
+            is_sdg_query = normalized_query.lower().startswith("sdg")
 
-            # Retrieve SDG-based results
-            sdg_results = filter_by_sdg_tag_from_cache(sdg_tag)
-            sdg_results = filter_out_null_transcripts(sdg_results)
+            # Add query type attributes
+            add_span_attribute("query.normalized", normalized_query)
+            add_span_attribute("query.is_sdg", is_sdg_query)
+            if sdg_number:
+                add_span_attribute("query.sdg_number", sdg_number)
 
-            # Also perform semantic search with augmented query
-            sdg_keywords_list = sdg_keywords.get(sdg_tag.lower(), [])
-            augmented_query = f"{query} {' '.join(sdg_keywords_list)}"
+            if is_sdg_query and sdg_number:
+                # Handle SDG tag-based search
+                sdg_tag = f"sdg{sdg_number}"
+                print(f"DEBUG: SDG tag detected: '{sdg_tag}'")
+                add_span_attribute("search.type", "sdg_tag")
+                add_span_attribute("search.sdg_tag", sdg_tag)
 
-            # Run semantic search
-            semantic_results = cached_semantic_search(augmented_query)
-            # Filter out results with null transcripts and zero scores
-            semantic_results = filter_out_null_transcripts(semantic_results)
-            semantic_results = filter_out_zero_scores(semantic_results)
+                with tracer.start_as_current_span("filter_by_sdg_tag"):
+                    # Retrieve SDG-based results
+                    sdg_results = filter_by_sdg_tag_from_cache(sdg_tag)
+                    sdg_results = filter_out_null_transcripts(sdg_results)
+                    add_span_attribute("sdg_results.count", len(sdg_results))
 
-            # Combine SDG and semantic results
-            results = rank_and_combine_results(semantic_results, sdg_results)
-            results = results[:10]
+                # Also perform semantic search with augmented query
+                sdg_keywords_list = sdg_keywords.get(sdg_tag.lower(), [])
+                augmented_query = f"{query} {' '.join(sdg_keywords_list)}"
+                add_span_attribute("query.augmented", augmented_query)
 
-        else:
-            # Run presenter and semantic searches in parallel
-            with ThreadPoolExecutor() as executor:
-                futures = {
-                    executor.submit(filter_by_presenter, query): "presenter",
-                    executor.submit(cached_semantic_search, query): "semantic"
-                }
+                with tracer.start_as_current_span("semantic_search"):
+                    # Run semantic search
+                    semantic_results = cached_semantic_search(augmented_query)
+                    # Filter out results with null transcripts and zero scores
+                    semantic_results = filter_out_null_transcripts(semantic_results)
+                    semantic_results = filter_out_zero_scores(semantic_results)
+                    add_span_attribute("semantic_results.count", len(semantic_results))
 
-                presenter_results = []
-                semantic_results = []
+                # Combine SDG and semantic results
+                results = rank_and_combine_results(semantic_results, sdg_results)
+                results = results[:10]
 
-                for future in as_completed(futures):
-                    tag = futures[future]
-                    if tag == "presenter":
-                        presenter_results = future.result()
-                    elif tag == "semantic":
-                        semantic_results = future.result()
+            else:
+                add_span_attribute("search.type", "general")
+                
+                # Run presenter and semantic searches in parallel
+                with tracer.start_as_current_span("parallel_search"):
+                    with ThreadPoolExecutor() as executor:
+                        futures = {
+                            executor.submit(filter_by_presenter, query): "presenter",
+                            executor.submit(cached_semantic_search, query): "semantic"
+                        }
 
-            # Filter out results with null transcripts and zero scores
-            presenter_results = filter_out_null_transcripts(presenter_results)
-            semantic_results = filter_out_null_transcripts(semantic_results)
-            semantic_results = filter_out_zero_scores(semantic_results)
+                        presenter_results = []
+                        semantic_results = []
 
-            # Combine and rank results
-            results = rank_and_combine_results(presenter_results, semantic_results)
-            results = results[:10]
+                        for future in as_completed(futures):
+                            tag = futures[future]
+                            if tag == "presenter":
+                                presenter_results = future.result()
+                                add_span_attribute("presenter_results.count", len(presenter_results))
+                            elif tag == "semantic":
+                                semantic_results = future.result()
+                                add_span_attribute("semantic_results.raw_count", len(semantic_results))
 
-        # Ensure 'sdg_tags' and 'transcript' keys exist
-        for result in results:
-            doc = result.get('document', {})
-            doc['sdg_tags'] = doc.get('sdg_tags', [])
-            doc['transcript'] = doc.get('transcript', '')
-            result['document'] = doc  # Update the document
+                # Filter out results with null transcripts and zero scores
+                presenter_results = filter_out_null_transcripts(presenter_results)
+                semantic_results = filter_out_null_transcripts(semantic_results)
+                semantic_results = filter_out_zero_scores(semantic_results)
+                add_span_attribute("semantic_results.filtered_count", len(semantic_results))
 
-    except RuntimeError as e:
-        print(f"{request_uuid} [Cache Error] {e}")
-        raise HTTPException(status_code=503, detail="Cache initialization failed.")
-    except Exception as e:
-        print(f"{request_uuid} [Search Error] {e}")
-        raise HTTPException(status_code=500, detail="Search failed.")
+                # Combine and rank results
+                results = rank_and_combine_results(presenter_results, semantic_results)
+                results = results[:10]
 
-    search_end_time = time.time()
-    print(f"{request_uuid} [Search] Completed in {search_end_time - search_start_time:.4f} seconds.")
+            # Ensure 'sdg_tags' and 'transcript' keys exist
+            for result in results:
+                doc = result.get('document', {})
+                doc['sdg_tags'] = doc.get('sdg_tags', [])
+                doc['transcript'] = doc.get('transcript', '')
+                result['document'] = doc  # Update the document
 
-    return {"results": results}
+            # Add final result count to span
+            add_span_attribute("results.final_count", len(results))
+
+        except RuntimeError as e:
+            print(f"{request_uuid} [Cache Error] {e}")
+            add_span_attribute("error", True)
+            add_span_attribute("error.type", "cache_error")
+            add_span_attribute("error.message", str(e))
+            raise HTTPException(status_code=503, detail="Cache initialization failed.")
+        except Exception as e:
+            print(f"{request_uuid} [Search Error] {e}")
+            add_span_attribute("error", True)
+            add_span_attribute("error.type", "search_error")
+            add_span_attribute("error.message", str(e))
+            raise HTTPException(status_code=500, detail="Search failed.")
+
+        search_end_time = time.time()
+        search_duration = search_end_time - search_start_time
+        add_span_attribute("search.duration_seconds", search_duration)
+        print(f"{request_uuid} [Search] Completed in {search_duration:.4f} seconds.")
+
+        return {"results": results}
+

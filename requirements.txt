@@ -3,3 +3,13 @@
 fastapi
 uvicorn
 numpy
+
+# OpenTelemetry for Honeycomb observability
+opentelemetry-instrumentation
+opentelemetry-distro
+opentelemetry-exporter-otlp
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-requests
+opentelemetry-processor-baggage
